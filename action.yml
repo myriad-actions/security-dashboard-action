@@ -1,0 +1,46 @@
+name: 'Security Dashboard Action Agent'
+description: 'gather ther results of your tests and push them to a database'
+inputs:
+  service_name:
+    description: 'Name of the service'
+    required: true
+  sec_db:
+    description: 'Security Database Name'
+    required: true
+  sec_db_user:
+    description: 'Security Database User'
+    required: true
+  sec_db_pw:
+    description: 'Security Database Password'
+    required: true
+  sec_db_host:
+    description: 'Security Database Host'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/checkout@v4
+      with:
+        repository: 'myriad-actions/security-dashboard-action'
+        path: 'security-dashboard-action'
+
+    - name: Set up Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.12'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r security-dashboard-action/requirements.txt
+      shell: bash
+
+    - name: Collect data & push to mysql
+      run: python security-dashboard-action/security_dashboard_agent.py ${{ inputs.service_name }}
+      shell: bash
+      env:
+        SEC_DB: ${{ inputs.sec_db }}
+        SEC_DB_USER: ${{ inputs.sec_db_user }}
+        SEC_DB_PW: ${{ inputs.sec_db_pw }}
+        SEC_DB_HOST: ${{ inputs.sec_db_host }}
