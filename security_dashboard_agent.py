@@ -1,13 +1,11 @@
 """
 This Python module is designed to automate the management of service-related information and 
-security scan results within a MySQL database. It facilitates the connection to the database, 
-creation and verification of necessary tables, and insertion or updating of service and scan data. 
+security scan results within a MySQL database. It facilitates the connection to the database
+and insertion or updating of service and scan data. 
 
 Key functionalities include:
 
 - Establishing connections to a MySQL database using provided credentials.
-- Checking for the existence of and creating tables for services and their 
-  respective security scan results.
 - Managing service records, including creating new records with standard attributes 
   and updating existing ones.
 - Fetching and executing SQL queries for data manipulation and retrieval.
@@ -76,22 +74,6 @@ def create_connection(host_name, user_name, user_password, db_name):
     return connection
 
 
-def check_if_table_exists(connection, table_name):
-    """
-    Checks if a specified table exists in the database.
-
-    Parameters:
-    - connection: MySQL connection object.
-    - table_name (str): The name of the table to check.
-
-    Returns:
-    - bool: True if the table exists, False otherwise.
-    """
-    check_table_query = f"SHOW TABLES LIKE '{table_name}'"
-    result = fetch_query(connection, check_table_query)
-    return result is not None
-
-
 def execute_query(connection, query, params=None):
     """
     Executes a SQL query against the database.
@@ -144,7 +126,7 @@ def fetch_query(connection, query, params=None):
         cursor.close()
 
 
-def check_and_create_service(connection, repo_name):
+def check_and_create_service(connection, repo_name, aws_name):
     """
     Checks if a service exists and creates a new service record if not, 
     using standard values for certain fields.
@@ -162,18 +144,19 @@ def check_and_create_service(connection, repo_name):
     if service_exists:
         print("Service already exists in the database.")
     else:
-        # Standard values as per the new requirement
-        aws_instance_name = repo_name  # Instance name is the service name
-        aws_api_type = "API"  # API type is standard "API"
-        prod_branch_name = "master"  # Standard production branch name
-        preprod_branch_name = "preprod"  # Standard pre-production branch name
+        command = "git remote show origin | grep 'HEAD branch' | cut -d' ' -f5"
+        result = subprocess.run(command, shell=True,
+                                text=True, capture_output=True, check=False)
+        aws_instance_name = aws_name
+        prod_branch_name = result.stdout.strip()
+        preprod_branch_name = "preprod"
 
         insert_query = """
-            INSERT INTO services (RepoName, AWSInstanceName, AWSAPIType, ProdBranchName, PreprodBranchName)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO services (RepoName, AWSInstanceName, ProdBranchName, PreprodBranchName)
+            VALUES (%s, %s, %s, %s)
         """
-        execute_query(connection, insert_query, (repo_name, aws_instance_name,
-                      aws_api_type, prod_branch_name, preprod_branch_name))
+        execute_query(connection, insert_query, (repo_name,
+                      aws_instance_name, prod_branch_name, preprod_branch_name))
         print("New service created successfully.")
 
 
@@ -209,42 +192,6 @@ def update_service_branch_sha(connection, repo_name, branch_name, new_sha):
         print("Service with specified repo name not found.")
 
 
-def create_scan_table(connection, service_name):
-    """
-    Creates a table for storing scan results for a service.
-
-    Parameters:
-    - connection: MySQL connection object.
-    - service_name (str): Name of the service.
-
-    Returns:
-    - None
-    """
-    table_name = f"`{service_name}_Scans`"
-    query = f"""
-    CREATE TABLE IF NOT EXISTS {table_name} (
-        CommitSHA VARCHAR(40) PRIMARY KEY,
-        VersionNumber VARCHAR(50) NOT NULL,
-        DateOfCommit DATE NOT NULL,
-        DateOfScan DATE NOT NULL,
-        DateOfLastPartialScan DATE NOT NULL,
-        TestResult BOOLEAN,
-        CredoResult BOOLEAN,
-        FormatResult BOOLEAN,
-        CodeCoverage FLOAT,
-        SobelowJSONResults JSON,
-        SobellowVulnerabilities INT,
-        MixAuditJSONResults JSON,
-        MixAuditVulnerabilities INT,
-        NpmJSONResults JSON,
-        NpmVulnerabilities INT,
-        AwsInspectorJSONResults JSON,
-        AwsInspectorVulnerabilities INT
-    );
-    """
-    execute_query(connection, query)
-
-
 def insert_or_update_scan_results(connection, service_name, scan_data):
     """
     Inserts or updates scan results for a service.
@@ -257,21 +204,21 @@ def insert_or_update_scan_results(connection, service_name, scan_data):
     Returns:
     - None
     """
-    table_name = f"`{service_name}_Scans`"
-    check_query = f"SELECT * FROM {table_name} WHERE CommitSHA = %s"
+    check_query = "SELECT * FROM scans WHERE service_name = %s AND commit_sha = %s"
     existing_entry = fetch_query(
-        connection, check_query, (scan_data['CommitSHA'],))
+        connection, check_query, (service_name, scan_data['CommitSHA']))
 
     if existing_entry:
         update_parts = []
         update_values = []
-        fields_to_exclude = ['CommitSHA', 'DateOfCommit', 'DateOfScan']
+        fields_to_exclude = ['CommitSHA', 'DateOfCommit']
         for key, value in scan_data.items():
             if key not in fields_to_exclude and value is not None:
                 update_parts.append(f"{key} = %s")
                 update_values.append(value)
         if update_parts:
-            update_query = f"UPDATE {table_name} SET {', '.join(update_parts)} WHERE CommitSHA = %s"
+            update_query = f"UPDATE scans SET {', '.join(update_parts)} WHERE service_name = %s AND commit_sha = %s"
+            update_values.append(service_name)
             update_values.append(scan_data['CommitSHA'])
             execute_query(connection, update_query, tuple(update_values))
         else:
@@ -279,9 +226,9 @@ def insert_or_update_scan_results(connection, service_name, scan_data):
     else:
         filtered_scan_data = {k: v for k,
                               v in scan_data.items() if v is not None}
-        columns = ", ".join(filtered_scan_data.keys())
+        columns = ", ".join(["service_name"] + list(filtered_scan_data.keys()))
         placeholders = ", ".join(["%s"] * len(filtered_scan_data))
-        insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        insert_query = f"INSERT INTO scans ({columns}) VALUES ({placeholders})"
         execute_query(connection, insert_query,
                       tuple(filtered_scan_data.values()))
 
@@ -342,6 +289,22 @@ def get_git_info():
     return branch_name, commit_sha, commit_date, repo_name, version
 
 
+def get_tool_versions_info():
+    """
+    Reads a file containing languages and their versions, separated by a space.
+    Each line in the file is expected to be in the format "language version".
+
+    :return: A list of tuples, where each tuple contains (language, version).
+    """
+    tool_versions = []
+    with open('.tool-versions', 'r') as file:
+        for line in file:
+            parts = line.strip().split(' ')
+            if len(parts) == 2:
+                tool_versions.append((parts[0], parts[1]))
+    return tool_versions
+
+
 def read_json_file(file_path):
     """
     Reads JSON content from a file.
@@ -388,13 +351,39 @@ def mix_deps_audit(output):
         return (0, json.dumps("no vulnerable dependencies"))
 
 
+def sobelow(output):
+    """
+    Analyzes the output from a security tool.
+
+    Parameters:
+    - output (dict): The audit output.
+
+    Returns:
+    - tuple: Number of findings found and their details in JSON format.
+    """
+    findings = []
+    confidence_levels = ['high_confidence',
+                         'medium_confidence', 'low_confidence']
+
+    for level in confidence_levels:
+        for finding in output['findings'][level]:
+            findings.append({
+                "confidence": level,
+                "type": finding['type'],
+                "file": finding['file'],
+                "line": finding['line'],
+            })
+
+    return (output['total_findings'], json.dumps(findings, indent=2))
+
+
 def main(folder_path, service_name):
     """
     Main function to process scan results and update the database.
 
     Parameters:
     - folder_path (str): Path to the folder containing the deps_audit.json file.
-    - service_name (str, optional): Name of the service. Defaults to "test_service".
+    - service_name (str): Name of the service. 
 
     Returns:
     - None
@@ -405,19 +394,26 @@ def main(folder_path, service_name):
     database = os.environ.get('SEC_DB', 'security_dashboard')
     connection = create_connection(host, user, password, database)
 
-    if not check_if_table_exists(connection, service_name):
-        create_scan_table(connection, service_name)
-
     branch_name, commit_sha, commit_date, repo_name, service_version = get_git_info()
-
-    file_path = os.path.join(folder_path, 'deps_audit.json')
-    result_data = read_json_file(file_path)
-    if result_data:
-        nb_vul, vulnerabilities = mix_deps_audit(result_data)
-    else:
-        print("Failed to read or process deps_audit.json")
-
     today_date = datetime.now().strftime('%Y-%m-%d')
+
+    languages = get_tool_versions_info()
+
+    if any(language.lower() == 'elixir' for language, version in languages):
+        file_path = os.path.join(folder_path, 'deps_audit.json')
+        result_data = read_json_file(file_path)
+        if result_data:
+            mix_audit_nb_vul, mix_audit_vulnerabilities = mix_deps_audit(
+                result_data)
+        else:
+            print("Failed to read or process deps_audit.json")
+
+        file_path = os.path.join(folder_path, 'sobelow.json')
+        result_data = read_json_file(file_path)
+        if result_data:
+            sobelow_nb_vul, sobelow_vulnerabilities = sobelow(result_data)
+        else:
+            print("Failed to read or process sobelow.json")
 
     scan_data = {
         'CommitSHA': commit_sha,
@@ -425,12 +421,14 @@ def main(folder_path, service_name):
         'DateOfCommit': commit_date,
         'DateOfScan': today_date,
         'DateOfLastPartialScan': today_date,
-        'MixAuditJSONResults': vulnerabilities if vulnerabilities else 'no vulnerable dependencies',
-        'MixAuditVulnerabilities': nb_vul
+        'MixAuditJSONResults': mix_audit_vulnerabilities if mix_audit_vulnerabilities else 'no vulnerable dependencies',
+        'MixAuditVulnerabilities': mix_audit_nb_vul,
+        'sobelow_json_results': sobelow_vulnerabilities if sobelow_vulnerabilities else 'no code vulnerabilities',
+        'sobelow_vulnerabilities': sobelow_nb_vul
     }
 
-    insert_or_update_scan_results(connection, service_name, scan_data)
-    check_and_create_service(connection, repo_name)
+    insert_or_update_scan_results(connection, repo_name, scan_data)
+    check_and_create_service(connection, repo_name, service_name)
     update_service_branch_sha(connection, repo_name, branch_name, commit_sha)
 
 
