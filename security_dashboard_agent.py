@@ -224,7 +224,7 @@ def insert_or_update_scan_results(connection, service_name, scan_data):
     else:
         filtered_scan_data = {k: v for k,
                               v in scan_data.items() if v is not None}
-        columns = ", ".join(["service_name"] + list(filtered_scan_data.keys()))
+        columns = ", ".join(filtered_scan_data.keys())
         placeholders = ", ".join(["%s"] * len(filtered_scan_data))
         insert_query = f"INSERT INTO scans ({columns}) VALUES ({placeholders})"
         execute_query(connection, insert_query,
@@ -414,6 +414,7 @@ def main(folder_path):
 
     scan_data = {
         'commit_sha': commit_sha,
+        'service_name': repo_name,
         'version_number': service_version,
         'date_of_commit': commit_date,
         'date_of_scan': today_date,
