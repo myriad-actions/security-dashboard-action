@@ -203,12 +203,12 @@ def insert_or_update_scan_results(connection, service_name, scan_data):
     """
     check_query = "SELECT * FROM scans WHERE service_name = %s AND commit_sha = %s"
     existing_entry = fetch_query(
-        connection, check_query, (service_name, scan_data['CommitSHA']))
+        connection, check_query, (service_name, scan_data['commit_sha']))
 
     if existing_entry:
         update_parts = []
         update_values = []
-        fields_to_exclude = ['CommitSHA', 'DateOfCommit']
+        fields_to_exclude = ['commit_sha', 'DateOfCommit']
         for key, value in scan_data.items():
             if key not in fields_to_exclude and value is not None:
                 update_parts.append(f"{key} = %s")
@@ -217,7 +217,7 @@ def insert_or_update_scan_results(connection, service_name, scan_data):
             update_query = f"""UPDATE scans SET {', '.join(update_parts)}
                                WHERE service_name = %s AND commit_sha = %s"""
             update_values.append(service_name)
-            update_values.append(scan_data['CommitSHA'])
+            update_values.append(scan_data['commit_sha'])
             execute_query(connection, update_query, tuple(update_values))
         else:
             print("No new information to update.")
@@ -413,7 +413,7 @@ def main(folder_path):
             print("Failed to read or process sobelow.json")
 
     scan_data = {
-        'CommitSHA': commit_sha,
+        'commit_sha': commit_sha,
         'VersionNumber': service_version,
         'DateOfCommit': commit_date,
         'DateOfScan': today_date,
