@@ -217,7 +217,8 @@ def insert_or_update_scan_results(connection, service_name, scan_data):
                 update_parts.append(f"{key} = %s")
                 update_values.append(value)
         if update_parts:
-            update_query = f"UPDATE scans SET {', '.join(update_parts)} WHERE service_name = %s AND commit_sha = %s"
+            update_query = f"""UPDATE scans SET {', '.join(update_parts)}
+                               WHERE service_name = %s AND commit_sha = %s"""
             update_values.append(service_name)
             update_values.append(scan_data['CommitSHA'])
             execute_query(connection, update_query, tuple(update_values))
@@ -421,9 +422,9 @@ def main(folder_path, service_name):
         'DateOfCommit': commit_date,
         'DateOfScan': today_date,
         'DateOfLastPartialScan': today_date,
-        'MixAuditJSONResults': mix_audit_vulnerabilities if mix_audit_vulnerabilities else 'no vulnerable dependencies',
+        'MixAuditJSONResults': mix_audit_vulnerabilities if mix_audit_vulnerabilities else None,
         'MixAuditVulnerabilities': mix_audit_nb_vul,
-        'sobelow_json_results': sobelow_vulnerabilities if sobelow_vulnerabilities else 'no code vulnerabilities',
+        'sobelow_json_results': sobelow_vulnerabilities if sobelow_vulnerabilities else None,
         'sobelow_vulnerabilities': sobelow_nb_vul
     }
 
