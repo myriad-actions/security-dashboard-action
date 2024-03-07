@@ -414,12 +414,11 @@ def main(folder_path):
 
     scan_data = {
         'commit_sha': commit_sha,
-        'VersionNumber': service_version,
-        'DateOfCommit': commit_date,
-        'DateOfScan': today_date,
-        'DateOfLastPartialScan': today_date,
-        'MixAuditJSONResults': mix_audit_vulnerabilities if mix_audit_vulnerabilities else None,
-        'MixAuditVulnerabilities': mix_audit_nb_vul,
+        'version_number': service_version,
+        'date_of_commit': commit_date,
+        'date_of_scan': today_date,
+        'mix_audit_json_results': mix_audit_vulnerabilities if mix_audit_vulnerabilities else None,
+        'mix_audit_vulnerabilities': mix_audit_nb_vul,
         'sobelow_json_results': sobelow_vulnerabilities if sobelow_vulnerabilities else None,
         'sobelow_vulnerabilities': sobelow_nb_vul
     }
