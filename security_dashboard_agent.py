@@ -6,8 +6,7 @@ and insertion or updating of service and scan data.
 Key functionalities include:
 
 - Establishing connections to a MySQL database using provided credentials.
-- Managing service records, including creating new records with standard attributes 
-  and updating existing ones.
+- creating new records and updating existing ones.
 - Fetching and executing SQL queries for data manipulation and retrieval.
 - Processing Git information to tie services and scan results to 
   specific code commits and branches.
@@ -28,17 +27,16 @@ Requirements:
 
 Usage:
 The script is executed with a service name as a command-line argument. 
-It assumes the presence of a 'deps_audit.json' file containing security scan results 
+It assumes the presence of 'deps_audit.json' & sobelow.json files containing security scan results 
 and a 'mix.exs' file for Elixir version information in the specified directory path.
 
 Example:
-    python security_dashboard_agent.py <service_name>
+    python security_dashboard_agent.py
 """
 
 
 import json
 import os
-import sys
 import re
 import subprocess
 from datetime import datetime
@@ -126,7 +124,7 @@ def fetch_query(connection, query, params=None):
         cursor.close()
 
 
-def check_and_create_service(connection, repo_name, aws_name):
+def check_and_create_service(connection, repo_name):
     """
     Checks if a service exists and creates a new service record if not, 
     using standard values for certain fields.
@@ -147,16 +145,15 @@ def check_and_create_service(connection, repo_name, aws_name):
         command = "git remote show origin | grep 'HEAD branch' | cut -d' ' -f5"
         result = subprocess.run(command, shell=True,
                                 text=True, capture_output=True, check=False)
-        aws_instance_name = aws_name
         prod_branch_name = result.stdout.strip()
         preprod_branch_name = "preprod"
 
         insert_query = """
-            INSERT INTO services (RepoName, AWSInstanceName, ProdBranchName, PreprodBranchName)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO services (RepoName, ProdBranchName, PreprodBranchName)
+            VALUES (%s, %s, %s)
         """
         execute_query(connection, insert_query, (repo_name,
-                      aws_instance_name, prod_branch_name, preprod_branch_name))
+                      prod_branch_name, preprod_branch_name))
         print("New service created successfully.")
 
 
@@ -378,13 +375,12 @@ def sobelow(output):
     return (output['total_findings'], json.dumps(findings, indent=2))
 
 
-def main(folder_path, service_name):
+def main(folder_path):
     """
     Main function to process scan results and update the database.
 
     Parameters:
     - folder_path (str): Path to the folder containing the deps_audit.json file.
-    - service_name (str): Name of the service. 
 
     Returns:
     - None
@@ -429,12 +425,9 @@ def main(folder_path, service_name):
     }
 
     insert_or_update_scan_results(connection, repo_name, scan_data)
-    check_and_create_service(connection, repo_name, service_name)
+    check_and_create_service(connection, repo_name)
     update_service_branch_sha(connection, repo_name, branch_name, commit_sha)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) >= 1:
-        main(os.environ.get('GITHUB_WORKSPACE', None), sys.argv[1])
-    else:
-        print("Please provide the service name as an argument")
+    main(os.environ.get('GITHUB_WORKSPACE', None))
