@@ -1,5 +1,5 @@
 """
-This Python module is designed to automate the management of service-related information and 
+This Python script is designed to automate the management of service-related information and 
 security scan results within a MySQL database. It facilitates the connection to the database
 and insertion or updating of service and scan data. 
 
@@ -20,15 +20,16 @@ software services developed in Elixir. It assumes a predefined database schema a
 is configured through environment variables and command-line arguments.
 
 Requirements:
-- Python 3.x
+- Python 3.12
 - mysql-connector-python package
 - Access to a MySQL database
 - Environment variables for database credentials and Git information
 
 Usage:
 The script is executed with a service name as a command-line argument. 
-It assumes the presence of 'deps_audit.json' & sobelow.json files containing security scan results 
-and a 'mix.exs' file for Elixir version information in the specified directory path.
+for now, it can handle the JSON output of scan tools sobelow & mix deps.audit
+it assumes the presence of a '.tool-version' & 'mix.exs' files for 
+Elixir version information in the specified directory path.
 
 Example:
     python security_dashboard_agent.py
@@ -241,7 +242,6 @@ def get_git_info():
     Returns:
     - tuple: Contains branch name, commit SHA, commit date, repo name, and service version.
     """
-    # GitHub Actions sets the commit SHA in GITHUB_SHA
     commit_sha = os.environ.get('GITHUB_SHA', None)
 
     if commit_sha:
@@ -252,7 +252,6 @@ def get_git_info():
     github_ref = os.environ.get('GITHUB_REF', None)
     ref_parts = github_ref.split('/')
 
-    # Check if the ref is a branch
     if len(ref_parts) > 2 and ref_parts[1] == 'heads':
         branch_name = ref_parts[2]
     else:
@@ -273,16 +272,19 @@ def get_git_info():
     except subprocess.CalledProcessError:
         repo_name = None
 
-    mix_exs_path = 'mix.exs'  # Path to the mix.exs file
+    mix_exs_path = 'mix.exs'
     version = None
     try:
         with open(mix_exs_path, 'r') as mix_file:
             mix_contents = mix_file.read()
-            version_match = re.search(r' version:\s*"([^\+]+)', mix_contents)
+            version_match = re.search(r'\bversion:\s*"([^"]*)"', mix_contents)
             if version_match:
-                version = version_match.group(1).strip()
-    except Exception as e:
-        print(f"An error occurred while reading {mix_exs_path}: {e}")
+                version = version_match.group(1)
+    except OSError as e:
+        if isinstance(e, FileNotFoundError):
+            print(f"The file {mix_exs_path} was not found.")
+        else:
+            print(f"An error occurred while handling {mix_exs_path}: {e}")
 
     return branch_name, commit_sha, commit_date, repo_name, version
 
@@ -303,6 +305,33 @@ def get_tool_versions_info():
     return tool_versions
 
 
+def process_result_file(folder_path, file_name, process_function):
+    """
+    check if the file result of a check exist,
+    and if it does, executes the function to process the results.
+
+    Parameters:
+    - folder_path (str): The directory containing the file.
+    - file_name (str): The name of the file to be processed.
+    - process_function (function): A function that processes the file's JSON content.
+
+    Returns:
+    - A tuple containing number of vulnerabilies & the vulnerabilities in JSON format.
+      If the file doesn't exist, return (None, None)
+    """
+    file_path = os.path.join(folder_path, file_name)
+
+    if not os.path.exists(file_path):
+        print(f"Failed to find {file_name}")
+        return None, None
+
+    result_data = read_json_file(file_path)
+    if not result_data:
+        return None, None
+
+    return process_function(result_data)
+
+
 def read_json_file(file_path):
     """
     Reads JSON content from a file.
@@ -318,8 +347,8 @@ def read_json_file(file_path):
             return json.load(f)
     except json.JSONDecodeError as e:
         print(f"Error reading JSON from {file_path}: {e}")
-    except Exception as e:
-        print(f"An unexpected error occurred when reading {file_path}: {e}")
+    except OSError as e:
+        print(f"An error occurred while accessing {file_path}: {e}")
     return None
 
 
@@ -346,7 +375,7 @@ def mix_deps_audit(output):
             })
         return (len(output['vulnerabilities']), json.dumps(vulnerabilities, indent=2))
     else:
-        return (0, json.dumps("no vulnerable dependencies"))
+        return (0, None)
 
 
 def sobelow(output):
@@ -371,8 +400,10 @@ def sobelow(output):
                 "file": finding['file'],
                 "line": finding['line'],
             })
-
-    return (output['total_findings'], json.dumps(findings, indent=2))
+    if findings:
+        return (len(output['findings']), json.dumps(findings, indent=2))
+    else:
+        return (0, None)
 
 
 def main(folder_path):
@@ -388,7 +419,7 @@ def main(folder_path):
     host = os.environ.get('SEC_DB_HOST', 'localhost')
     user = os.environ.get('SEC_DB_USER', 'root')
     password = os.environ.get('SEC_DB_PW', '')
-    database = os.environ.get('SEC_DB', 'security_dashboard')
+    database = os.environ.get('SEC_DB', 'devsec')
     connection = create_connection(host, user, password, database)
 
     branch_name, commit_sha, commit_date, repo_name, service_version = get_git_info()
@@ -397,20 +428,10 @@ def main(folder_path):
     languages = get_tool_versions_info()
 
     if any(language.lower() == 'elixir' for language, version in languages):
-        file_path = os.path.join(folder_path, 'deps_audit.json')
-        result_data = read_json_file(file_path)
-        if result_data:
-            mix_audit_nb_vul, mix_audit_vulnerabilities = mix_deps_audit(
-                result_data)
-        else:
-            print("Failed to read or process deps_audit.json")
-
-        file_path = os.path.join(folder_path, 'sobelow.json')
-        result_data = read_json_file(file_path)
-        if result_data:
-            sobelow_nb_vul, sobelow_vulnerabilities = sobelow(result_data)
-        else:
-            print("Failed to read or process sobelow.json")
+        mix_audit_nb_vul, mix_audit_vulnerabilities = process_result_file(
+            folder_path, 'deps_audit.json', mix_deps_audit)
+        sobelow_nb_vul, sobelow_vulnerabilities = process_result_file(
+            folder_path, 'sobelow.json', sobelow)
 
     scan_data = {
         'commit_sha': commit_sha,
@@ -419,9 +440,9 @@ def main(folder_path):
         'date_of_commit': commit_date,
         'date_of_scan': today_date,
         'mix_audit_json_results': mix_audit_vulnerabilities if mix_audit_vulnerabilities else None,
-        'mix_audit_vulnerabilities': mix_audit_nb_vul,
+        'mix_audit_vulnerabilities': mix_audit_nb_vul if mix_audit_nb_vul != 0 else None,
         'sobelow_json_results': sobelow_vulnerabilities if sobelow_vulnerabilities else None,
-        'sobelow_vulnerabilities': sobelow_nb_vul
+        'sobelow_vulnerabilities': sobelow_nb_vul if sobelow_nb_vul != 0 else None
     }
 
     insert_or_update_scan_results(connection, repo_name, scan_data)
